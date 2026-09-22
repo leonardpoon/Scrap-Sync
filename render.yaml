@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: scrap-sync
+    runtime: node
+    plan: starter
+    branch: main
+    buildCommand: npm ci
+    # The schema is idempotent, so applying it at every deployment is safe.
+    startCommand: npm run db:setup && npm start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: MEDIA_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: scrapbook-media

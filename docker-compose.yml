@@ -1,0 +1,27 @@
+# Dedicated PostgreSQL for Scrap&Sync.
+# Host port 5434 is used so it does not clash with a local PostgreSQL (5432)
+# or another Docker Postgres already on 5433.
+# Start it with:  docker compose up -d
+services:
+  db:
+    image: postgres:17
+    container_name: scrapsync-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: scrapsync
+      POSTGRES_PASSWORD: scrapsync
+      POSTGRES_DB: scrapsync
+    ports:
+      - "5434:5432"
+    volumes:
+      - scrapsync_pgdata:/var/lib/postgresql/data
+      # Schema is auto-applied on first container creation.
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrapsync -d scrapsync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  scrapsync_pgdata:

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title><%= title %> · Scrap&Sync</title>
+  <link rel="stylesheet" href="/assets/styles.css" />
+  <style>
+    :root {
+      --bg: <%= backgroundHex %>;
+      --ink: <%= dark ? '#f5efe0' : '#33312e' %>;
+    }
+  </style>
+</head>
+<body class="<%= dark ? 'is-dark' : '' %>">
+  <header class="cover">
+    <% if (isDemo) { %><p class="eyebrow">Scrap&amp;Sync · demo scrapbook</p><% } %>
+    <h1><%= title %></h1>
+    <p class="subtitle"><%= count %> <%= count === 1 ? 'memory' : 'memories' %></p>
+    <% if (isDemo) { %>
+      <p class="intro">A private little corner for the people and places you want to remember.</p>
+    <% } %>
+  </header>
+
+  <main class="pages">
+    <% if (count === 0) { %>
+      <p class="empty">This scrapbook is empty for now.</p>
+    <% } %>
+
+    <% rows.forEach(function (row) { %>
+      <% if (row.hasCaption) { %>
+        <section class="row row--<%= row.photoSide %>">
+          <figure class="photo" style="--rot: <%= row.rotation %>deg">
+            <img src="<%= row.url %>" alt="<%= row.caption %>" loading="lazy" />
+          </figure>
+          <aside class="note">
+            <p><%= row.caption %></p>
+          </aside>
+        </section>
+      <% } else { %>
+        <section class="row row--solo">
+          <figure class="photo" style="--rot: <%= row.rotation %>deg">
+            <img src="<%= row.url %>" alt="" loading="lazy" />
+          </figure>
+        </section>
+      <% } %>
+    <% }); %>
+  </main>
+
+  <footer class="foot">
+    <p><%= isDemo ? 'Your shared memories could look like this.' : 'Made with Scrap&Sync' %></p>
+  </footer>
+</body>
+</html>

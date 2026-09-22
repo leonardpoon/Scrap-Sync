@@ -1,0 +1,51 @@
+name: Test and promote develop
+
+on:
+  push:
+    branches:
+      - develop
+
+# Required for the workflow to advance the main branch after the checks pass.
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-develop
+  cancel-in-progress: false
+
+jobs:
+  test-and-promote:
+    name: Test and promote to main
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out develop
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Fast-forward main to the tested develop commit
+        env:
+          TARGET_BRANCH: main
+        run: |
+          git fetch origin "$TARGET_BRANCH"
+          if ! git merge-base --is-ancestor "origin/$TARGET_BRANCH" HEAD; then
+            echo "main contains commits not in develop; refusing to overwrite it."
+            exit 1
+          fi
+          if git diff --quiet "origin/$TARGET_BRANCH" HEAD; then
+            echo "main is already current."
+            exit 0
+          fi
+          git push origin HEAD:"$TARGET_BRANCH"

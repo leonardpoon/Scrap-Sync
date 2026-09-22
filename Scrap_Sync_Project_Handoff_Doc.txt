@@ -1,0 +1,64 @@
+# Scrap&Sync: Project Handoff Document
+
+**Lead Developer:** Leonard
+**Date:** August 2026
+**Status:** Architecture Phase
+
+## 1. Executive Summary
+**Scrap&Sync** is a frictionless, multi-tenant digital scrapbook platform. It eliminates the traditional barriers to collaborative photo sharing—such as app downloads and account creation—by using a 1-on-1 Telegram direct messaging bot as the sole data ingestion point. Users interact privately with the bot to create albums, upload compressed images, and categorize them. The system automatically compiles these images into beautifully stylized, read-only web galleries accessible via secure, shareable links.
+
+## 2. Core Architecture & Tech Stack
+The infrastructure is designed for high scalability and zero-cost maintenance, leveraging serverless functions and generous free tiers.
+* **Ingestion (Frontend UI for Uploads):** Telegram Bot API (1-on-1 direct messaging).
+* **Routing & Compute (Backend):** Cloudflare Workers (or Vercel Serverless Functions). Webhooks process incoming payloads instantaneously without the need for a persistent server.
+* **Media Storage:** Cloudflare R2 Object Storage. Takes advantage of zero-egress fees for high-traffic web viewer access.
+* **Database:** Supabase (PostgreSQL). Stores user states, scrapbook metadata (including a `background_color` field), and image URLs with optional captions (nullable `caption` text field on the images table).
+* **Web Viewer (Frontend UI for Viewing):** Vercel or Cloudflare Pages hosting a responsive static or server-side rendered application (React/Next.js/Vue).
+
+## 3. The User Journey (1-on-1 Model)
+
+### A. Initialization & Scrapbook Creation
+1. User searches for the Scrap&Sync bot on Telegram and sends `/start`.
+2. The bot records their immutable `telegram_user_id`.
+3. User sends `/new "Bali Trip"`.
+4. The system generates a unique UUID (e.g., `8f4b-4c9a...`), creates the scrapbook record in the database, and returns the public sharing link to the user.
+
+### B. Media Ingestion & Routing
+1. The user forwards or uploads photos directly into the 1-on-1 bot chat, optionally including a caption in the same message (Telegram's native photo-caption field).
+2. The bot intercepts the upload. If the user owns multiple scrapbooks, the bot replies with an Inline Keyboard: *"Which scrapbook should I save this to? [Bali Trip] [Graduation]"*.
+3. Upon selection, the serverless backend downloads Telegram's natively compressed image, streams it directly into the Cloudflare R2 bucket, and logs the image URL — along with the optional caption, if present — in the database against the selected scrapbook UUID.
+4. **Caption scope (MVP):** only captions sent in the same message as the photo are captured. A text message sent as a separate, subsequent message is not treated as a caption. (Future enhancement: prompt the user to caption their last uploaded photo.)
+
+### C. Viewing & Sharing
+1. The user forwards their unique `scrapsync.com` link to friends and family via WhatsApp, iMessage, etc.
+2. Visitors click the link. The web application queries the database using the UUID, pulls the corresponding Cloudflare R2 image URLs and captions, and renders them in an alternating scrapbook-page layout (see 3D).
+
+### D. Web Viewer Layout — "Scrapbook Page" Design
+Rather than a uniform masonry grid, entries render as a vertically stacked series of alternating photo/caption rows, evoking the feel of turning through a physical scrapbook:
+* **Row pattern:** Image 1 — photo left, caption right. Image 2 — photo right, caption left. Pattern continues, alternating with each entry.
+* **Caption styling:** Rendered in a serif/handwritten-style font to differentiate it visually from UI chrome, giving the impression of a handwritten note beside the photo.
+* **Photo styling:** A slight alternating rotation (e.g. -2°/+2°) on each photo reinforces the "pasted into a physical album" feel.
+* **No-caption fallback:** If an entry has no caption, the row renders the photo alone (centered or single-column) rather than leaving an empty half-row.
+* **Responsive behavior:** On narrow/mobile viewports, the two-column row pattern should collapse to a single stacked column (photo above caption) to preserve readability.
+
+### E. Customization — `/menu` Command
+1. User sends `/menu` in the bot chat.
+2. If the user owns multiple scrapbooks, the bot first asks which one to customize via Inline Keyboard: *"Which scrapbook? [Bali Trip] [Graduation]"*.
+3. The bot presents a settings menu via Inline Keyboard, starting with **Background colour**: *"Choose a background: [Cream] [Kraft brown] [Blush pink] [Sage green] [Charcoal]"*.
+4. Upon selection, the backend writes the chosen value to the `background_color` field on that scrapbook's database record.
+5. The bot confirms: *"Background updated ✅ — your gallery will reflect this on next visit."*
+6. **Ownership check:** identical to the upload flow — the backend verifies the scrapbook UUID belongs to the requesting `telegram_user_id` before writing any change.
+7. **MVP scope:** a fixed palette of preset swatches (not free-text hex input) keeps the Inline Keyboard simple and avoids invalid input handling. Custom hex entry can be a future `/menu` sub-option once the pattern is validated.
+8. **Extensibility:** `/menu` is designed as the general entry point for scrapbook settings — future options (cover font, layout density, privacy toggle) can be added as additional Inline Keyboard rows under the same command without introducing new top-level commands.
+
+## 4. Security & Access Control
+* **Owner Authority:** The database explicitly maps each scrapbook UUID to the creator's `telegram_user_id`. Only the creator can upload photos to their specific scrapbook via the bot.
+* **No Web Authentication Required:** The frontend relies on the principle of "Security through Obscurity" for viewers. The database UUID serves as the password. Without the exact UUID, the web galleries are completely inaccessible and un-crawlable by search engines.
+
+## 5. Development Milestones
+* **Phase 1: Foundation.** Provision the Supabase database schema and configure the Telegram Bot via BotFather.
+* **Phase 2: Ingestion Pipeline.** Write the serverless webhook to receive text commands, process inline keyboard callbacks, and authenticate users based on their Telegram ID.
+* **Phase 3: Storage Integration.** Connect the webhook to Cloudflare R2 to handle image streaming and save the resulting URLs — plus optional captions — to the database.
+* **Phase 4: Presentation Layer.** Build the web frontend to consume the database API and display the photos and captions in the alternating scrapbook-page layout described in section 3D, applying each scrapbook's stored `background_color`.
+* **Phase 5: Customization.** Implement the `/menu` command flow (section 3E): scrapbook selection, Inline Keyboard swatch picker, ownership-checked write to `background_color`.
+"""

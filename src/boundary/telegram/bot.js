@@ -1,0 +1,335 @@
+// BOUNDARY (telegram): the Telegram bot adapter.
+//
+// Translates Telegram updates (commands, photos, inline-keyboard callbacks)
+// into calls on the control layer, and formats replies back to the user.
+// Contains no business rules — those live in src/control.
+import { Bot, InlineKeyboard } from 'grammy';
+import { config } from '../../config.js';
+import { PALETTE } from '../../entity/palette.js';
+import { ScrapbookController } from '../../control/ScrapbookController.js';
+import { ImageController } from '../../control/ImageController.js';
+import { MenuController } from '../../control/MenuController.js';
+import { PendingStore } from './pendingStore.js';
+import { ContributionStore } from './contributionStore.js';
+import { NewScrapbookStore } from './newScrapbookStore.js';
+import { downloadPhoto } from './telegramFiles.js';
+
+export function createBot() {
+  const bot = new Bot(config.requireTelegramToken());
+
+  // Albums are personal/contribution-link spaces, never group-chat threads.
+  bot.use(async (ctx, next) => {
+    if (ctx.chat?.type && ctx.chat.type !== 'private') {
+      await ctx.reply('For privacy, Scrap&Sync only works in a private chat with the bot.');
+      return;
+    }
+    return next();
+  });
+
+  // ── /start ────────────────────────────────────────────────
+  bot.command('start', async (ctx) => {
+    await ScrapbookController.registerUser({
+      telegramUserId: ctx.from.id,
+      firstName: ctx.from.first_name,
+      username: ctx.from.username,
+    });
+    const payload = (ctx.match || '').trim();
+    const contributionMatch = /^upload_([a-f0-9]{48})$/.exec(payload);
+    if (contributionMatch) {
+      ContributionStore.set(ctx.from.id, contributionMatch[1]);
+      await ctx.reply(
+        'You can now add memories to this scrapbook. Send a photo here; it will be added to the shared album.',
+      );
+      return;
+    }
+
+    await ctx.reply(
+      `📔 Welcome to Scrap&Sync, ${ctx.from.first_name || 'there'}!\n\n` +
+        `Create a scrapbook, send it photos, and share a link — no app or login needed.\n\n` +
+        `• /new "Bali Trip"  — create a scrapbook\n` +
+        `• Send a photo (add a caption in the same message)\n` +
+      `• /menu  — customise a scrapbook's background\n` +
+        `• /rotate  — replace a contribution link\n` +
+        `• /list  — see your scrapbooks\n` +
+        `• /help  — show this again`,
+    );
+  });
+
+  bot.command('help', (ctx) =>
+    ctx.reply(
+      `How to use Scrap&Sync:\n\n` +
+        `1. /new "Trip name"  creates a scrapbook and gives you a share link.\n` +
+        `2. Send photos to me. Put a caption in the photo's caption box to label it.\n` +
+      `3. /menu  changes a scrapbook's background colour.\n` +
+        `4. /rotate  replaces a contribution link if it was shared too widely.\n` +
+        `5. /list  shows your scrapbooks and their links.`,
+    ),
+  );
+
+  // ── /new "Title" ──────────────────────────────────────────
+  bot.command('new', async (ctx) => {
+    const raw = (ctx.match || '').trim().replace(/^["']|["']$/g, '');
+    if (!raw) {
+      NewScrapbookStore.start(ctx.from.id);
+      return ctx.reply('What would you like to call this scrapbook?');
+    }
+    await createScrapbook(ctx, raw);
+  });
+
+  async function createScrapbook(ctx, title) {
+    try {
+      const { scrapbook, shareUrl, contributionUrl } = await ScrapbookController.create({
+        telegramUserId: ctx.from.id,
+        firstName: ctx.from.first_name,
+        username: ctx.from.username,
+        title,
+      });
+      const contributionNote = contributionUrl
+        ? `\n\nWant others to add memories? Share this contribution link only with people you trust:\n${contributionUrl}`
+        : '\n\nSet TELEGRAM_BOT_USERNAME in the server configuration to enable contribution links.';
+      await ctx.reply(
+        `✅ Created “${scrapbook.title}”.\n\n` +
+          `Share this link so anyone can view it:\n${shareUrl}\n\n` +
+        `Now just send me photos to fill it.${contributionNote}`,
+        { link_preview_options: { is_disabled: true } },
+      );
+    } catch (err) {
+      if (err.message === 'EMPTY_TITLE') {
+        return ctx.reply('Give your scrapbook a name, e.g.  /new "Bali Trip"');
+      }
+      console.error('[new]', err);
+      await ctx.reply('Something went wrong creating that scrapbook. Please try again.');
+    }
+  }
+
+  // ── /list ─────────────────────────────────────────────────
+  bot.command('list', async (ctx) => {
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+    if (books.length === 0) {
+      return ctx.reply('You have no scrapbooks yet. Create one with  /new "Trip name"');
+    }
+    const lines = books.map((b) => {
+      const contributionUrl = ScrapbookController.contributionUrl(b.uploadToken);
+      return `• ${b.title}\n  View: ${ScrapbookController.shareUrl(b.publicToken)}` +
+        (contributionUrl ? `\n  Add memories: ${contributionUrl}` : '');
+    });
+    await ctx.reply(`Your scrapbooks:\n\n${lines.join('\n\n')}`, {
+      link_preview_options: { is_disabled: true },
+    });
+  });
+
+  // ── Photo upload (handoff 3B) ─────────────────────────────
+  bot.on('message:photo', async (ctx) => {
+    const photos = ctx.message.photo;
+    const largest = photos[photos.length - 1]; // best resolution
+    const fileId = largest.file_id;
+    const caption = ctx.message.caption || null;
+
+    const uploadToken = ContributionStore.get(ctx.from.id);
+    if (uploadToken) {
+      return ingestContribution(ctx, { fileId, caption, uploadToken });
+    }
+
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+
+    if (books.length === 0) {
+      return ctx.reply('First create a scrapbook with  /new "Trip name"  then send the photo again.');
+    }
+
+    if (books.length === 1) {
+      return ingestPhoto(ctx, { fileId, caption, scrapbookId: books[0].id });
+    }
+
+    // Multiple scrapbooks: ask which one via inline keyboard.
+    const t = PendingStore.put({
+      fileId,
+      caption,
+      requesterId: ctx.from.id,
+      scrapbookIds: books.map((b) => b.id),
+    });
+    const kb = new InlineKeyboard();
+    books.forEach((b, i) => kb.text(b.title, `us:${t}:${i}`).row());
+    await ctx.reply('Which scrapbook should I save this to?', { reply_markup: kb });
+  });
+
+  // Callback: user picked a scrapbook for the pending photo.
+  bot.callbackQuery(/^us:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, idxStr] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: 'That request expired — send the photo again.' });
+      return ctx.editMessageText('This upload expired. Please send the photo again.');
+    }
+    const scrapbookId = pending.scrapbookIds[Number(idxStr)];
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    await ctx.editMessageText('Saving…');
+    await ingestPhoto(ctx, {
+      fileId: pending.fileId,
+      caption: pending.caption,
+      scrapbookId,
+      edit: true,
+    });
+  });
+
+  // ── /menu (handoff 3E) ────────────────────────────────────
+  bot.command('menu', async (ctx) => {
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+    if (books.length === 0) {
+      return ctx.reply('You have no scrapbooks yet. Create one with  /new "Trip name"');
+    }
+    if (books.length === 1) {
+      return sendColorMenu(ctx, books[0]);
+    }
+    // Ask which scrapbook to customise.
+    const t = PendingStore.put({
+      requesterId: ctx.from.id,
+      scrapbookIds: books.map((b) => b.id),
+    });
+    const kb = new InlineKeyboard();
+    books.forEach((b, i) => kb.text(b.title, `ms:${t}:${i}`).row());
+    await ctx.reply('Which scrapbook would you like to customise?', { reply_markup: kb });
+  });
+
+  // Rotating immediately invalidates the old contribution link.
+  bot.command('rotate', async (ctx) => {
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+    if (books.length === 0) return ctx.reply('You have no scrapbooks yet.');
+    const t = PendingStore.put({ requesterId: ctx.from.id, scrapbookIds: books.map((b) => b.id) });
+    const kb = new InlineKeyboard();
+    books.forEach((b, i) => kb.text(b.title, `rt:${t}:${i}`).row());
+    await ctx.reply('Choose the scrapbook whose contribution link you want to replace:', { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^rt:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, idxStr] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending) return ctx.editMessageText('This request expired. Send /rotate again.');
+    PendingStore.remove(t);
+    try {
+      const { scrapbook, contributionUrl } = await ScrapbookController.rotateContributionLink({
+        scrapbookId: pending.scrapbookIds[Number(idxStr)], requesterId: ctx.from.id,
+      });
+      const text = contributionUrl
+        ? `Replaced the contribution link for “${scrapbook.title}”. The old link no longer works.\n\nNew link:\n${contributionUrl}`
+        : 'Link rotated. Set TELEGRAM_BOT_USERNAME to display the new deep link.';
+      await ctx.answerCallbackQuery({ text: 'Link replaced' });
+      await ctx.editMessageText(text, { link_preview_options: { is_disabled: true } });
+    } catch (err) {
+      console.error('[rotate]', err);
+      await ctx.answerCallbackQuery({ text: 'Could not rotate the link.' });
+    }
+  });
+
+  // Callback: picked which scrapbook to customise -> show colour swatches.
+  bot.callbackQuery(/^ms:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, idxStr] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Please send /menu again.');
+    }
+    const scrapbookId = pending.scrapbookIds[Number(idxStr)];
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    await sendColorMenu(ctx, { id: scrapbookId }, { edit: true });
+  });
+
+  // Callback: picked a colour swatch -> write it (ownership-checked).
+  bot.callbackQuery(/^mc:([a-f0-9]+):([a-z]+)$/, async (ctx) => {
+    const [, t, colorKey] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Please send /menu again.');
+    }
+    try {
+      const updated = await MenuController.setBackgroundColor({
+        scrapbookId: pending.scrapbookId,
+        requesterId: ctx.from.id,
+        colorKey,
+      });
+      PendingStore.remove(t);
+      await ctx.answerCallbackQuery({ text: 'Updated ✅' });
+      await ctx.editMessageText(
+        `Background updated ✅ — “${updated.title}” now uses ${PALETTE[colorKey].label}.\n` +
+          `Your gallery will reflect this on next visit.`,
+      );
+    } catch (err) {
+      if (err.message === 'NOT_OWNER') {
+        await ctx.answerCallbackQuery({ text: 'That is not your scrapbook.' });
+        return;
+      }
+      console.error('[menu]', err);
+      await ctx.answerCallbackQuery({ text: 'Something went wrong.' });
+    }
+  });
+
+  // Gentle nudge for stray text.
+  bot.on('message:text', async (ctx) => {
+    if (ctx.message.text.startsWith('/')) return; // unknown command, ignore
+    if (NewScrapbookStore.take(ctx.from.id)) {
+      return createScrapbook(ctx, ctx.message.text.trim());
+    }
+    return ctx.reply('Send me a photo to add it to a scrapbook, or /new to create one.');
+  });
+
+  bot.catch((err) => console.error('[bot error]', err.error ?? err));
+
+  return bot;
+}
+
+// ── Helpers ──────────────────────────────────────────────────
+
+async function ingestPhoto(ctx, { fileId, caption, scrapbookId, edit = false }) {
+  try {
+    const { buffer, ext } = await downloadPhoto(ctx.api, fileId);
+    const { image, scrapbook } = await ImageController.savePhoto({
+      scrapbookId,
+      requesterId: ctx.from.id,
+      buffer,
+      ext,
+      caption,
+    });
+    const note = image.caption ? ` with your caption` : '';
+    const text = `📸 Added to “${scrapbook.title}”${note}.\n${ScrapbookController.shareUrl(scrapbook.publicToken)}`;
+    if (edit) await ctx.editMessageText(text, { link_preview_options: { is_disabled: true } });
+    else await ctx.reply(text, { link_preview_options: { is_disabled: true } });
+  } catch (err) {
+    const msg =
+      err.message === 'NOT_OWNER'
+        ? 'That scrapbook is not yours.'
+        : 'Sorry, I could not save that photo. Please try again.';
+    console.error('[ingest]', err);
+    if (edit) await ctx.editMessageText(msg);
+    else await ctx.reply(msg);
+  }
+}
+
+async function ingestContribution(ctx, { fileId, caption, uploadToken }) {
+  try {
+    const { buffer, ext } = await downloadPhoto(ctx.api, fileId);
+    const { scrapbook } = await ImageController.saveContribution({
+      uploadToken, requesterId: ctx.from.id, buffer, ext, caption,
+    });
+    await ctx.reply(`📸 Added to “${scrapbook.title}”. Thanks for sharing a memory!`);
+  } catch (err) {
+    const message = err.message === 'CONTRIBUTION_LINK_INVALID'
+      ? 'This contribution link has been replaced or revoked. Ask the owner for a new link.'
+      : 'Sorry, I could not save that photo. Please try again.';
+    console.error('[contribution]', err);
+    await ctx.reply(message);
+  }
+}
+
+async function sendColorMenu(ctx, scrapbook, { edit = false } = {}) {
+  const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
+  const kb = new InlineKeyboard();
+  Object.entries(PALETTE).forEach(([key, { label }], i) => {
+    kb.text(label, `mc:${t}:${key}`);
+    if (i % 2 === 1) kb.row(); // two swatches per row
+  });
+  const text = 'Choose a background:';
+  if (edit) await ctx.editMessageText(text, { reply_markup: kb });
+  else await ctx.reply(text, { reply_markup: kb });
+}

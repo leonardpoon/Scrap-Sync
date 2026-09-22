@@ -1,0 +1,135 @@
+/* Scrap&Sync web viewer — "scrapbook page" layout (handoff 3D). */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg, #f5efe0);
+  color: var(--ink, #33312e);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  min-height: 100vh;
+  padding: 0 1rem 4rem;
+  background-image: radial-gradient(rgba(83, 65, 43, 0.08) 0.7px, transparent 0.7px);
+  background-size: 7px 7px;
+}
+
+.cover {
+  text-align: center;
+  padding: 3rem 1rem 2rem;
+}
+.eyebrow {
+  margin: 0 0 0.8rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0.58;
+}
+.cover h1 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 6vw, 3.25rem);
+  margin: 0;
+  letter-spacing: 0.5px;
+}
+.subtitle {
+  opacity: 0.7;
+  margin: 0.5rem 0 0;
+  font-style: italic;
+}
+.intro {
+  max-width: 31rem;
+  margin: 1.1rem auto 0;
+  line-height: 1.55;
+  opacity: 0.74;
+}
+
+.pages {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3.5rem;
+}
+
+.empty {
+  text-align: center;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* Each entry is a two-column row: photo on one side, note on the other. */
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 1.5rem;
+}
+/* Even entries: photo left. Odd entries: photo right (note left). */
+.row--right { direction: rtl; }
+.row--right > * { direction: ltr; }
+
+.row--solo {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+/* Photo styled as if pasted into a physical album. */
+.photo {
+  margin: 0;
+  background: #fff;
+  padding: 0.6rem 0.6rem 1.8rem;
+  border-radius: 2px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+  transform: rotate(var(--rot, 0deg));
+  transition: transform 0.2s ease;
+  max-width: 420px;
+  width: 100%;
+}
+.photo:hover { transform: rotate(0deg) scale(1.02); }
+.photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 1px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+}
+
+/* Caption: handwritten-style note beside the photo. */
+.note p {
+  font-family: "Segoe Script", "Bradley Hand", "Snell Roundhand", cursive;
+  font-size: clamp(1.1rem, 2.5vw, 1.6rem);
+  line-height: 1.5;
+  margin: 0;
+}
+.note {
+  position: relative;
+  padding: 1.5rem 1.7rem;
+  background: rgba(255, 252, 236, 0.64);
+  box-shadow: 2px 3px 0 rgba(80, 62, 40, 0.08);
+}
+.note::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 72px;
+  height: 15px;
+  background: rgba(206, 182, 126, 0.58);
+  transform: translateX(-50%) rotate(-2deg);
+}
+
+.foot {
+  text-align: center;
+  opacity: 0.5;
+  margin-top: 3rem;
+  font-size: 0.85rem;
+}
+
+.is-dark .photo { box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+
+/* Mobile: collapse the two-column row to a single stacked column. */
+@media (max-width: 640px) {
+  .row, .row--right { direction: ltr; grid-template-columns: 1fr; justify-items: center; }
+  .note { text-align: center; }
+}
