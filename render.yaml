@@ -16,8 +16,6 @@ services:
         sync: false
       - key: DATABASE_SSL_CA_FILE
         value: ./certs/prod-ca-2021.crt
-      - key: PUBLIC_BASE_URL
-        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_USERNAME

@@ -27,7 +27,7 @@ export const config = {
   },
   web: {
     port: Number(process.env.PORT || 3000),
-    publicBaseUrl: (process.env.PUBLIC_BASE_URL || 'http://localhost:3000').replace(/\/$/, ''),
+    publicBaseUrl: (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/$/, ''),
   },
   media: {
     provider: process.env.MEDIA_PROVIDER || 'local',
