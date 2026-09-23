@@ -2,6 +2,7 @@ services:
   - type: web
     name: scrap-sync
     runtime: node
+    region: singapore
     plan: starter
     branch: main
     buildCommand: npm ci
