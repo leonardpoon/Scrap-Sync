@@ -249,7 +249,7 @@ export function createBot() {
       await ctx.replyWithPhoto(image.url, {
         caption: `Delete this photo?\n${photoDescription(image)}`,
         reply_markup: new InlineKeyboard()
-          .text('🗑️ Delete photo', `dx:${confirmToken}`)
+          .text('Delete photo', `dx:${confirmToken}`)
           .text('Keep it', `dk:${confirmToken}`),
       });
     } catch (error) {
