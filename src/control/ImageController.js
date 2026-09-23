@@ -48,4 +48,36 @@ export const ImageController = {
     });
     return { image, scrapbook };
   },
+
+  async listOwnedPhotos({ scrapbookId, requesterId }) {
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+    return ImageRepository.listByScrapbook(scrapbookId);
+  },
+
+  async findOwnedPhoto({ imageId, scrapbookId, requesterId }) {
+    const image = await ImageRepository.findByIdAndScrapbook(imageId, scrapbookId);
+    if (!image) throw new Error('IMAGE_NOT_FOUND');
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook || !scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+    return image;
+  },
+
+  async deleteOwnedPhoto({ imageId, scrapbookId, requesterId }) {
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+
+    const image = await ImageRepository.deleteByIdAndScrapbook(imageId, scrapbookId);
+    if (!image) throw new Error('IMAGE_NOT_FOUND');
+
+    try {
+      await MediaStorage.remove(image.url);
+      return { image, mediaDeleted: true };
+    } catch (error) {
+      console.error('[media cleanup]', error);
+      return { image, mediaDeleted: false };
+    }
+  },
 };

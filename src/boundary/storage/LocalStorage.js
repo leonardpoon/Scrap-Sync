@@ -8,7 +8,7 @@
 // needs to change — controllers only depend on this `save()` contract.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { config } from '../../config.js';
 
 let r2Client;
@@ -29,6 +29,12 @@ export const MediaStorage = {
     await fs.writeFile(fullPath, buffer);
     // Public URL: PUBLIC_BASE_URL + MEDIA_URL_PREFIX + /filename
     return `${config.web.publicBaseUrl}${config.media.urlPrefix}/${filename}`;
+  },
+
+  async remove(url) {
+    if (config.media.provider === 'supabase') return removeFromSupabase(url);
+    if (config.media.provider === 'r2') return removeFromR2(url);
+    return removeFromLocalDisk(url);
   },
 };
 
@@ -69,16 +75,7 @@ async function saveToR2(buffer, { key, ext }) {
     throw new Error('R2_STORAGE_NOT_CONFIGURED');
   }
 
-  if (!r2Client) {
-    r2Client = new S3Client({
-      region: 'auto',
-      endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
-      credentials: {
-        accessKeyId: r2AccessKeyId,
-        secretAccessKey: r2SecretAccessKey,
-      },
-    });
-  }
+  r2Client = getR2Client();
 
   const filename = `${key}.${ext}`;
   try {
@@ -93,6 +90,61 @@ async function saveToR2(buffer, { key, ext }) {
   }
 
   return `${r2PublicBaseUrl}/${filename}`;
+}
+
+async function removeFromR2(url) {
+  const key = objectKeyFromPublicUrl(url, config.media.r2PublicBaseUrl);
+  try {
+    await getR2Client().send(new DeleteObjectCommand({ Bucket: config.media.r2Bucket, Key: key }));
+  } catch (error) {
+    throw new Error(`R2_STORAGE_DELETE_FAILED: ${error.message}`, { cause: error });
+  }
+}
+
+async function removeFromSupabase(url) {
+  const { supabaseUrl, supabaseServiceRoleKey, supabaseBucket } = config.media;
+  const publicBase = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(supabaseBucket)}`;
+  const key = objectKeyFromPublicUrl(url, publicBase);
+  const objectUrl = `${supabaseUrl}/storage/v1/object/${encodeURIComponent(supabaseBucket)}/${key}`;
+  const response = await fetch(objectUrl, {
+    method: 'DELETE',
+    headers: { apikey: supabaseServiceRoleKey, Authorization: `Bearer ${supabaseServiceRoleKey}` },
+  });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`SUPABASE_STORAGE_DELETE_FAILED: ${response.status}`);
+  }
+}
+
+async function removeFromLocalDisk(url) {
+  const key = objectKeyFromPublicUrl(url, `${config.web.publicBaseUrl}${config.media.urlPrefix}`);
+  const fullPath = path.resolve(config.media.dir, key);
+  if (!fullPath.startsWith(`${config.media.dir}${path.sep}`)) throw new Error('LOCAL_STORAGE_URL_INVALID');
+  try {
+    await fs.unlink(fullPath);
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+  }
+}
+
+function objectKeyFromPublicUrl(url, baseUrl) {
+  const prefix = `${baseUrl.replace(/\/$/, '')}/`;
+  if (!url.startsWith(prefix)) throw new Error('STORAGE_URL_INVALID');
+  return decodeURIComponent(url.slice(prefix.length));
+}
+
+function getR2Client() {
+  const { r2AccountId, r2AccessKeyId, r2SecretAccessKey } = config.media;
+  if (!r2AccountId || !r2AccessKeyId || !r2SecretAccessKey) {
+    throw new Error('R2_STORAGE_NOT_CONFIGURED');
+  }
+  if (!r2Client) {
+    r2Client = new S3Client({
+      region: 'auto',
+      endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
+      credentials: { accessKeyId: r2AccessKeyId, secretAccessKey: r2SecretAccessKey },
+    });
+  }
+  return r2Client;
 }
 
 function mimeTypeFor(ext) {

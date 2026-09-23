@@ -21,4 +21,20 @@ export const ImageRepository = {
     );
     return rows.map(Image.fromRow);
   },
+
+  async findByIdAndScrapbook(id, scrapbookId) {
+    const { rows } = await query(
+      `SELECT * FROM images WHERE id = $1 AND scrapbook_id = $2`,
+      [id, scrapbookId],
+    );
+    return Image.fromRow(rows[0]);
+  },
+
+  async deleteByIdAndScrapbook(id, scrapbookId) {
+    const { rows } = await query(
+      `DELETE FROM images WHERE id = $1 AND scrapbook_id = $2 RETURNING *`,
+      [id, scrapbookId],
+    );
+    return Image.fromRow(rows[0]);
+  },
 };

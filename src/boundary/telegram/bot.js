@@ -48,8 +48,9 @@ export function createBot() {
         `Create a scrapbook, send it photos, and share a link — no app or login needed.\n\n` +
         `• /new "Bali Trip"  — create a scrapbook\n` +
         `• Send a photo (add a caption in the same message)\n` +
-      `• /menu  — customise a scrapbook's background\n` +
+        `• /menu  — customise a scrapbook's background\n` +
         `• /rotate  — replace a contribution link\n` +
+        `• /delete  — remove a photo from a scrapbook\n` +
         `• /list  — see your scrapbooks\n` +
         `• /help  — show this again`,
     );
@@ -61,8 +62,9 @@ export function createBot() {
         `1. /new "Trip name"  creates a scrapbook and gives you a share link.\n` +
         `2. Send photos to me. Put a caption in the photo's caption box to label it.\n` +
       `3. /menu  changes a scrapbook's background colour.\n` +
-        `4. /rotate  replaces a contribution link if it was shared too widely.\n` +
-        `5. /list  shows your scrapbooks and their links.`,
+      `4. /rotate  replaces a contribution link if it was shared too widely.\n` +
+        `5. /delete  lets you find and remove a photo.\n` +
+        `6. /list  shows your scrapbooks and their links.`,
     ),
   );
 
@@ -201,6 +203,102 @@ export function createBot() {
     await ctx.reply('Choose the scrapbook whose contribution link you want to replace:', { reply_markup: kb });
   });
 
+  // ── /delete ──────────────────────────────────────────────
+  // An owner browses photos by date/caption, previews one, then confirms.
+  bot.command('delete', async (ctx) => {
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+    if (books.length === 0) return ctx.reply('You have no scrapbooks yet.');
+    if (books.length === 1) {
+      return sendDeletionBrowser(ctx, { scrapbookId: books[0].id, requesterId: ctx.from.id });
+    }
+    const t = PendingStore.put({ requesterId: ctx.from.id, scrapbookIds: books.map((book) => book.id) });
+    const kb = new InlineKeyboard();
+    books.forEach((book, index) => kb.text(book.title, `ds:${t}:${index}`).row());
+    return ctx.reply('Which scrapbook would you like to manage?', { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^ds:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, indexText] = ctx.match;
+    const pending = PendingStore.get(t);
+    const scrapbookId = pending?.scrapbookIds?.[Number(indexText)];
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id) || !scrapbookId) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /delete again.' });
+      return ctx.editMessageText('This menu expired. Send /delete again.');
+    }
+    await ctx.answerCallbackQuery();
+    return sendDeletionBrowser(ctx, { scrapbookId, requesterId: ctx.from.id, edit: true });
+  });
+
+  bot.callbackQuery(/^dp:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, indexText] = ctx.match;
+    const pending = PendingStore.get(t);
+    const imageId = pending?.imageIds?.[Number(indexText)];
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id) || !imageId) {
+      await ctx.answerCallbackQuery({ text: 'That photo list expired — send /delete again.' });
+      return;
+    }
+    try {
+      const image = await ImageController.findOwnedPhoto({
+        imageId, scrapbookId: pending.scrapbookId, requesterId: ctx.from.id,
+      });
+      const confirmToken = PendingStore.put({
+        requesterId: ctx.from.id, scrapbookId: pending.scrapbookId, imageId: image.id,
+      });
+      await ctx.answerCallbackQuery();
+      await ctx.replyWithPhoto(image.url, {
+        caption: `Delete this photo?\n${photoDescription(image)}`,
+        reply_markup: new InlineKeyboard()
+          .text('🗑️ Delete photo', `dx:${confirmToken}`)
+          .text('Keep it', `dk:${confirmToken}`),
+      });
+    } catch (error) {
+      console.error('[delete preview]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not open that photo.' });
+    }
+  });
+
+  bot.callbackQuery(/^dn:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, pageText] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That photo list expired — send /delete again.' });
+      return ctx.editMessageText('This photo list expired. Send /delete again.');
+    }
+    await ctx.answerCallbackQuery();
+    return sendDeletionBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, page: Number(pageText), edit: true,
+    });
+  });
+
+  bot.callbackQuery(/^dk:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery({ text: 'Kept' });
+    return ctx.editMessageCaption('Kept — this photo was not deleted.');
+  });
+
+  bot.callbackQuery(/^dx:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That confirmation expired — send /delete again.' });
+      return;
+    }
+    try {
+      const { mediaDeleted } = await ImageController.deleteOwnedPhoto({
+        imageId: pending.imageId, scrapbookId: pending.scrapbookId, requesterId: ctx.from.id,
+      });
+      PendingStore.remove(t);
+      await ctx.answerCallbackQuery({ text: 'Photo deleted' });
+      return ctx.editMessageCaption(
+        mediaDeleted ? '🗑️ Photo deleted.' : '🗑️ Photo removed from the scrapbook. Storage cleanup is pending.',
+      );
+    } catch (error) {
+      console.error('[delete photo]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not delete that photo.' });
+    }
+  });
+
   bot.callbackQuery(/^rt:([a-f0-9]+):(\d+)$/, async (ctx) => {
     const [, t, idxStr] = ctx.match;
     const pending = PendingStore.get(t);
@@ -332,4 +430,53 @@ async function sendColorMenu(ctx, scrapbook, { edit = false } = {}) {
   const text = 'Choose a background:';
   if (edit) await ctx.editMessageText(text, { reply_markup: kb });
   else await ctx.reply(text, { reply_markup: kb });
+}
+
+const deleteDateFormatter = new Intl.DateTimeFormat('en-SG', {
+  timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', year: 'numeric',
+});
+
+function photoDescription(image) {
+  const date = deleteDateFormatter.format(new Date(image.createdAt));
+  return image.hasCaption() ? `${date} · ${image.caption}` : `${date} · no caption`;
+}
+
+async function sendDeletionBrowser(ctx, { scrapbookId, requesterId, page = 0, edit = false }) {
+  try {
+    const photos = (await ImageController.listOwnedPhotos({ scrapbookId, requesterId })).reverse();
+    if (photos.length === 0) {
+      const text = 'This scrapbook has no photos to delete.';
+      return edit ? ctx.editMessageText(text) : ctx.reply(text);
+    }
+
+    const pageSize = 6;
+    const pageCount = Math.ceil(photos.length / pageSize);
+    const safePage = Math.max(0, Math.min(page, pageCount - 1));
+    const start = safePage * pageSize;
+    const pagePhotos = photos.slice(start, start + pageSize);
+    const t = PendingStore.put({
+      requesterId, scrapbookId, imageIds: pagePhotos.map((photo) => photo.id),
+    });
+    const kb = new InlineKeyboard();
+    pagePhotos.forEach((photo, index) => {
+      const number = start + index + 1;
+      kb.text(photoButtonLabel(photo, number), `dp:${t}:${index}`).row();
+    });
+    if (safePage > 0) kb.text('‹ Newer', `dn:${t}:${safePage - 1}`);
+    if (safePage < pageCount - 1) kb.text('Older ›', `dn:${t}:${safePage + 1}`);
+
+    const text = `Choose a photo to preview and delete (${start + 1}–${start + pagePhotos.length} of ${photos.length}):`;
+    return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
+  } catch (error) {
+    console.error('[delete browser]', error);
+    const text = 'Could not load this scrapbook’s photos. Please try /delete again.';
+    return edit ? ctx.editMessageText(text) : ctx.reply(text);
+  }
+}
+
+function photoButtonLabel(image, number) {
+  const caption = image.hasCaption()
+    ? image.caption.replace(/\s+/g, ' ').trim().slice(0, 28)
+    : 'no caption';
+  return `#${number} · ${deleteDateFormatter.format(new Date(image.createdAt))} · ${caption}`.slice(0, 62);
 }
