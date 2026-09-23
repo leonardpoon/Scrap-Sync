@@ -1,6 +1,7 @@
 // Applies db/schema.sql to the database in DATABASE_URL.
 // Run once after creating the database:  npm run db:setup
-import fs from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -10,9 +11,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function main() {
   const schemaPath = path.resolve(__dirname, '../db/schema.sql');
-  const sql = await fs.readFile(schemaPath, 'utf8');
+  const sql = await readFile(schemaPath, 'utf8');
 
-  const client = new pg.Client({ connectionString: config.database.url });
+  const ssl = config.database.sslCertFile
+    ? { ca: fs.readFileSync(config.database.sslCertFile, 'utf8'), rejectUnauthorized: true }
+    : undefined;
+  const client = new pg.Client({ connectionString: config.database.url, ssl });
   await client.connect();
   console.log(`Connected to ${redact(config.database.url)}`);
   await client.query(sql);

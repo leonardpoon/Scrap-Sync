@@ -181,9 +181,10 @@ people you trust.
 
 ## Going to the cloud later
 
-- **Media → Cloudflare R2:** replace the body of `save()` in
-  `src/boundary/storage/LocalStorage.js` with an S3 `PutObject` call and return
-  the R2 public URL. Nothing else changes — controllers only depend on `save()`.
+- **Media → Cloudflare R2:** supported through the R2 adapter. Set
+  `MEDIA_PROVIDER=r2`, configure the `R2_*` values in `.env`, and use a
+  bucket-scoped Object Read & Write credential. Nothing else changes —
+  controllers only depend on `save()`.
 - **Database → Supabase:** point `DATABASE_URL` at your Supabase Postgres
   connection string and run `npm run db:setup`. The schema is identical.
 
@@ -220,20 +221,24 @@ a Render web service. Use a non-sleeping Render plan: the bot must remain
 running to receive messages. Render applies the idempotent database schema on
 each deploy before starting the service.
 
-Create a Supabase project and a **public** Storage bucket named
-`scrapbook-media`. In Render, add the values from the Supabase Connect and API
-pages as secret environment variables:
+Create a Supabase project for PostgreSQL and a Cloudflare R2 bucket named
+`scrapsync-media` for photos. Enable the R2 bucket's public URL (or connect a
+custom media domain for production). In Render, add the following values as
+secret environment variables:
 
 ```text
 DATABASE_URL=<Supabase Session Pooler connection string, with sslmode=require>
-SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<Supabase service_role key>
 PUBLIC_BASE_URL=https://<your-render-service>.onrender.com
 TELEGRAM_BOT_TOKEN=<BotFather token>
 TELEGRAM_BOT_USERNAME=<BotFather username, without @>
-MEDIA_PROVIDER=supabase
-SUPABASE_STORAGE_BUCKET=scrapbook-media
+MEDIA_PROVIDER=r2
+R2_ACCOUNT_ID=<Cloudflare account ID>
+R2_ACCESS_KEY_ID=<bucket-scoped R2 access key ID>
+R2_SECRET_ACCESS_KEY=<bucket-scoped R2 secret access key>
+R2_BUCKET=scrapsync-media
+R2_PUBLIC_BASE_URL=https://<your-public-bucket>.r2.dev
 ```
 
-`SUPABASE_SERVICE_ROLE_KEY` bypasses Storage access controls and must remain a
-Render-only secret; it must never be committed or sent to a browser.
+`R2_SECRET_ACCESS_KEY` grants the service access to upload images. Keep it in
+Render only; never commit it or send it to a browser. Scope the R2 token to the
+single `scrapsync-media` bucket with Object Read & Write permission.

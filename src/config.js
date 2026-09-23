@@ -21,6 +21,9 @@ export const config = {
   },
   database: {
     url: process.env.DATABASE_URL || 'postgres://scrapsync:scrapsync@localhost:5432/scrapsync',
+    sslCertFile: process.env.DATABASE_SSL_CA_FILE
+      ? path.resolve(projectRoot, process.env.DATABASE_SSL_CA_FILE)
+      : '',
   },
   web: {
     port: Number(process.env.PORT || 3000),
@@ -33,6 +36,11 @@ export const config = {
     supabaseUrl: (process.env.SUPABASE_URL || '').replace(/\/$/, ''),
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
     supabaseBucket: process.env.SUPABASE_STORAGE_BUCKET || 'scrapbook-media',
+    r2AccountId: process.env.R2_ACCOUNT_ID || '',
+    r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
+    r2Bucket: process.env.R2_BUCKET || 'scrapsync-media',
+    r2PublicBaseUrl: (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/$/, ''),
   },
   paths: {
     projectRoot,

@@ -8,7 +8,10 @@
 // needs to change — controllers only depend on this `save()` contract.
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { config } from '../../config.js';
+
+let r2Client;
 
 export const MediaStorage = {
   // buffer: Buffer of image bytes. ext: file extension without dot (e.g. 'jpg').
@@ -16,6 +19,9 @@ export const MediaStorage = {
   async save(buffer, { key, ext = 'jpg' }) {
     if (config.media.provider === 'supabase') {
       return saveToSupabase(buffer, { key, ext });
+    }
+    if (config.media.provider === 'r2') {
+      return saveToR2(buffer, { key, ext });
     }
     await fs.mkdir(config.media.dir, { recursive: true });
     const filename = `${key}.${ext}`;
@@ -53,6 +59,40 @@ async function saveToSupabase(buffer, { key, ext }) {
   // The bucket is intentionally public: gallery pages need image URLs that a
   // visitor's browser can render without receiving a server credential.
   return `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(supabaseBucket)}/${filename}`;
+}
+
+async function saveToR2(buffer, { key, ext }) {
+  const {
+    r2AccountId, r2AccessKeyId, r2SecretAccessKey, r2Bucket, r2PublicBaseUrl,
+  } = config.media;
+  if (!r2AccountId || !r2AccessKeyId || !r2SecretAccessKey || !r2PublicBaseUrl) {
+    throw new Error('R2_STORAGE_NOT_CONFIGURED');
+  }
+
+  if (!r2Client) {
+    r2Client = new S3Client({
+      region: 'auto',
+      endpoint: `https://${r2AccountId}.r2.cloudflarestorage.com`,
+      credentials: {
+        accessKeyId: r2AccessKeyId,
+        secretAccessKey: r2SecretAccessKey,
+      },
+    });
+  }
+
+  const filename = `${key}.${ext}`;
+  try {
+    await r2Client.send(new PutObjectCommand({
+      Bucket: r2Bucket,
+      Key: filename,
+      Body: buffer,
+      ContentType: mimeTypeFor(ext),
+    }));
+  } catch (error) {
+    throw new Error(`R2_STORAGE_UPLOAD_FAILED: ${error.message}`, { cause: error });
+  }
+
+  return `${r2PublicBaseUrl}/${filename}`;
 }
 
 function mimeTypeFor(ext) {

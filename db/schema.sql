@@ -52,3 +52,10 @@ CREATE TABLE IF NOT EXISTS images (
 
 CREATE INDEX IF NOT EXISTS idx_images_scrapbook ON images(scrapbook_id, created_at);
 ALTER TABLE images ADD COLUMN IF NOT EXISTS contributor_id BIGINT REFERENCES users(telegram_user_id) ON DELETE SET NULL;
+
+-- These tables live in Supabase's exposed `public` schema, but the app talks
+-- to Postgres only from its server. Enable RLS without browser-facing policies
+-- so Supabase's Data API cannot reveal scrapbook metadata or Telegram IDs.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE scrapbooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE images ENABLE ROW LEVEL SECURITY;

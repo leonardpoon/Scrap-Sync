@@ -14,6 +14,8 @@ services:
         value: "20"
       - key: DATABASE_URL
         sync: false
+      - key: DATABASE_SSL_CA_FILE
+        value: ./certs/prod-ca-2021.crt
       - key: PUBLIC_BASE_URL
         sync: false
       - key: TELEGRAM_BOT_TOKEN
@@ -21,10 +23,14 @@ services:
       - key: TELEGRAM_BOT_USERNAME
         sync: false
       - key: MEDIA_PROVIDER
-        value: supabase
-      - key: SUPABASE_URL
+        value: r2
+      - key: R2_ACCOUNT_ID
         sync: false
-      - key: SUPABASE_SERVICE_ROLE_KEY
+      - key: R2_ACCESS_KEY_ID
         sync: false
-      - key: SUPABASE_STORAGE_BUCKET
-        value: scrapbook-media
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: scrapsync-media
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
