@@ -12,6 +12,7 @@ import { MenuController } from '../../control/MenuController.js';
 import { PendingStore } from './pendingStore.js';
 import { ContributionStore } from './contributionStore.js';
 import { NewScrapbookStore } from './newScrapbookStore.js';
+import { RenameStore } from './renameStore.js';
 import { downloadPhoto } from './telegramFiles.js';
 
 export function createBot() {
@@ -48,7 +49,7 @@ export function createBot() {
         `Create a scrapbook, send it photos, and share a link — no app or login needed.\n\n` +
         `• /new "Bali Trip"  — create a scrapbook\n` +
         `• Send a photo (add a caption in the same message)\n` +
-        `• /menu  — customise a scrapbook's background\n` +
+      `• /menu  — manage a scrapbook\n` +
         `• /rotate  — replace a contribution link\n` +
         `• /delete  — remove a photo from a scrapbook\n` +
         `• /list  — see your scrapbooks\n` +
@@ -61,7 +62,7 @@ export function createBot() {
       `How to use Scrap&Sync:\n\n` +
         `1. /new "Trip name"  creates a scrapbook and gives you a share link.\n` +
         `2. Send photos to me. Put a caption in the photo's caption box to label it.\n` +
-      `3. /menu  changes a scrapbook's background colour.\n` +
+      `3. /menu  manages a scrapbook’s colour, name, or deletion.\n` +
       `4. /rotate  replaces a contribution link if it was shared too widely.\n` +
         `5. /delete  lets you find and remove a photo.\n` +
         `6. /list  shows your scrapbooks and their links.`,
@@ -174,23 +175,23 @@ export function createBot() {
     });
   });
 
-  // ── /menu (handoff 3E) ────────────────────────────────────
+  // ── /menu ─────────────────────────────────────────────────
   bot.command('menu', async (ctx) => {
     const books = await ScrapbookController.listOwned(ctx.from.id);
     if (books.length === 0) {
       return ctx.reply('You have no scrapbooks yet. Create one with  /new "Trip name"');
     }
     if (books.length === 1) {
-      return sendColorMenu(ctx, books[0]);
+      return sendScrapbookMenu(ctx, books[0]);
     }
-    // Ask which scrapbook to customise.
+    // Ask which scrapbook to manage.
     const t = PendingStore.put({
       requesterId: ctx.from.id,
       scrapbookIds: books.map((b) => b.id),
     });
     const kb = new InlineKeyboard();
     books.forEach((b, i) => kb.text(b.title, `ms:${t}:${i}`).row());
-    await ctx.reply('Which scrapbook would you like to customise?', { reply_markup: kb });
+    await ctx.reply('Which scrapbook would you like to manage?', { reply_markup: kb });
   });
 
   // Rotating immediately invalidates the old contribution link.
@@ -319,7 +320,7 @@ export function createBot() {
     }
   });
 
-  // Callback: picked which scrapbook to customise -> show colour swatches.
+  // Callback: picked which scrapbook -> show management actions.
   bot.callbackQuery(/^ms:([a-f0-9]+):(\d+)$/, async (ctx) => {
     const [, t, idxStr] = ctx.match;
     const pending = PendingStore.get(t);
@@ -330,7 +331,80 @@ export function createBot() {
     const scrapbookId = pending.scrapbookIds[Number(idxStr)];
     PendingStore.remove(t);
     await ctx.answerCallbackQuery();
-    await sendColorMenu(ctx, { id: scrapbookId }, { edit: true });
+    await sendScrapbookMenu(ctx, { id: scrapbookId }, { edit: true });
+  });
+
+  bot.callbackQuery(/^mb:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendColorMenu(ctx, { id: pending.scrapbookId }, { edit: true });
+  });
+
+  bot.callbackQuery(/^mn:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    RenameStore.start(ctx.from.id, pending.scrapbookId);
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText('Send the new scrapbook name.');
+  });
+
+  bot.callbackQuery(/^md:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    const confirmToken = PendingStore.put({ requesterId: ctx.from.id, scrapbookId: pending.scrapbookId });
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText(
+      'Delete this entire scrapbook and all of its photos? This cannot be undone.',
+      {
+        reply_markup: new InlineKeyboard()
+          .text('🗑️ Delete scrapbook', `mx:${confirmToken}`)
+          .text('Keep it', `mk:${confirmToken}`),
+      },
+    );
+  });
+
+  bot.callbackQuery(/^mk:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery({ text: 'Kept' });
+    return ctx.editMessageText('Kept — this scrapbook was not deleted.');
+  });
+
+  bot.callbackQuery(/^mx:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That confirmation expired — send /menu again.' });
+      return;
+    }
+    try {
+      const result = await ScrapbookController.deleteOwned({
+        scrapbookId: pending.scrapbookId, requesterId: ctx.from.id,
+      });
+      PendingStore.remove(t);
+      await ctx.answerCallbackQuery({ text: 'Scrapbook deleted' });
+      const cleanupNote = result.mediaCleanupFailures ? '\nSome storage cleanup is pending.' : '';
+      return ctx.editMessageText(`🗑️ Deleted “${result.scrapbook.title}” and ${result.imageCount} photo(s).${cleanupNote}`);
+    } catch (error) {
+      console.error('[delete scrapbook]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not delete that scrapbook.' });
+    }
   });
 
   // Callback: picked a colour swatch -> write it (ownership-checked).
@@ -368,6 +442,20 @@ export function createBot() {
     if (ctx.message.text.startsWith('/')) return; // unknown command, ignore
     if (NewScrapbookStore.take(ctx.from.id)) {
       return createScrapbook(ctx, ctx.message.text.trim());
+    }
+    const scrapbookId = RenameStore.take(ctx.from.id);
+    if (scrapbookId) {
+      try {
+        const scrapbook = await ScrapbookController.rename({
+          scrapbookId, requesterId: ctx.from.id, title: ctx.message.text,
+        });
+        return ctx.reply(`✅ Renamed scrapbook to “${scrapbook.title}”.`);
+      } catch (error) {
+        const message = error.message === 'EMPTY_TITLE'
+          ? 'Please send a name with at least one character.'
+          : 'Could not rename that scrapbook. Send /menu and try again.';
+        return ctx.reply(message);
+      }
     }
     return ctx.reply('Send me a photo to add it to a scrapbook, or /new to create one.');
   });
@@ -430,6 +518,17 @@ async function sendColorMenu(ctx, scrapbook, { edit = false } = {}) {
   const text = 'Choose a background:';
   if (edit) await ctx.editMessageText(text, { reply_markup: kb });
   else await ctx.reply(text, { reply_markup: kb });
+}
+
+async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
+  const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
+  const kb = new InlineKeyboard()
+    .text('🎨 Background', `mb:${t}`)
+    .text('✏️ Rename', `mn:${t}`)
+    .row()
+    .text('🗑️ Delete scrapbook', `md:${t}`);
+  const text = 'What would you like to change?';
+  return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
 }
 
 const deleteDateFormatter = new Intl.DateTimeFormat('en-SG', {

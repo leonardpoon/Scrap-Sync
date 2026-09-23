@@ -45,6 +45,19 @@ export const ScrapbookRepository = {
     return Scrapbook.fromRow(rows[0]);
   },
 
+  async updateTitle(id, title) {
+    const { rows } = await query(
+      `UPDATE scrapbooks SET title = $2 WHERE id = $1 RETURNING *`,
+      [id, title],
+    );
+    return Scrapbook.fromRow(rows[0]);
+  },
+
+  async deleteById(id) {
+    const { rows } = await query(`DELETE FROM scrapbooks WHERE id = $1 RETURNING *`, [id]);
+    return Scrapbook.fromRow(rows[0]);
+  },
+
   async rotateUploadToken(id) {
     const { rows } = await query(
       `UPDATE scrapbooks SET upload_token = encode(gen_random_bytes(24), 'hex') WHERE id = $1 RETURNING *`,

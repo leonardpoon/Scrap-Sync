@@ -1,6 +1,8 @@
 // CONTROL: scrapbook use-cases (create, list, resolve share link).
 import { UserRepository } from '../boundary/persistence/UserRepository.js';
 import { ScrapbookRepository } from '../boundary/persistence/ScrapbookRepository.js';
+import { ImageRepository } from '../boundary/persistence/ImageRepository.js';
+import { MediaStorage } from '../boundary/storage/LocalStorage.js';
 import { config } from '../config.js';
 import { DEFAULT_COLOR } from '../entity/palette.js';
 
@@ -48,5 +50,33 @@ export const ScrapbookController = {
     if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
     const updated = await ScrapbookRepository.rotateUploadToken(scrapbookId);
     return { scrapbook: updated, contributionUrl: this.contributionUrl(updated.uploadToken) };
+  },
+
+  async rename({ scrapbookId, requesterId, title }) {
+    const cleanTitle = (title || '').trim();
+    if (!cleanTitle) throw new Error('EMPTY_TITLE');
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+    return ScrapbookRepository.updateTitle(scrapbookId, cleanTitle);
+  },
+
+  async deleteOwned({ scrapbookId, requesterId }) {
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+
+    const images = await ImageRepository.listByScrapbook(scrapbookId);
+    const deleted = await ScrapbookRepository.deleteById(scrapbookId);
+    let mediaCleanupFailures = 0;
+    for (const image of images) {
+      try {
+        await MediaStorage.remove(image.url);
+      } catch (error) {
+        mediaCleanupFailures += 1;
+        console.error('[album media cleanup]', error);
+      }
+    }
+    return { scrapbook: deleted, imageCount: images.length, mediaCleanupFailures };
   },
 };
