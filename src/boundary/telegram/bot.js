@@ -346,6 +346,18 @@ export function createBot() {
     return sendColorMenu(ctx, { id: pending.scrapbookId }, { edit: true });
   });
 
+  bot.callbackQuery(/^mm:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendManagementMenu(ctx, { id: pending.scrapbookId }, { edit: true });
+  });
+
   bot.callbackQuery(/^mn:([a-f0-9]+)$/, async (ctx) => {
     const [, t] = ctx.match;
     const pending = PendingStore.get(t);
@@ -524,10 +536,18 @@ async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
   const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
   const kb = new InlineKeyboard()
     .text('🎨 Background', `mb:${t}`)
+    .text('⚙️ Scrapbook management', `mm:${t}`);
+  const text = 'What would you like to change?';
+  return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
+}
+
+async function sendManagementMenu(ctx, scrapbook, { edit = false } = {}) {
+  const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
+  const kb = new InlineKeyboard()
     .text('✏️ Rename', `mn:${t}`)
     .row()
     .text('🗑️ Delete scrapbook', `md:${t}`);
-  const text = 'What would you like to change?';
+  const text = 'Scrapbook management:';
   return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
 }
 
