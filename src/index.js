@@ -27,6 +27,19 @@ async function main() {
       );
     } else {
       bot = createBot();
+      try {
+        await bot.api.setMyCommands([
+          { command: 'new', description: 'Create a new scrapbook' },
+          { command: 'menu', description: 'Manage a scrapbook' },
+          { command: 'list', description: 'View your scrapbooks' },
+          { command: 'delete', description: 'Remove a photo' },
+          { command: 'rotate', description: 'Replace a contribution link' },
+          { command: 'help', description: 'How to use Scrap&Sync' },
+        ]);
+      } catch (error) {
+        // The bot remains usable if Telegram is temporarily unreachable at startup.
+        console.warn('⚠  Could not update the Telegram command menu:', error.message);
+      }
       bot.start({
         onStart: (me) => console.log(`🤖 Telegram bot @${me.username} is running (long polling).`),
       });
