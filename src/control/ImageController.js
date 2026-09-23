@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { ScrapbookRepository } from '../boundary/persistence/ScrapbookRepository.js';
 import { ImageRepository } from '../boundary/persistence/ImageRepository.js';
 import { MediaStorage } from '../boundary/storage/LocalStorage.js';
+import { optimizePhoto } from '../boundary/image/ImageOptimizer.js';
 
 export const ImageController = {
   // scrapbookId: target album. requesterId: the Telegram user uploading.
@@ -16,7 +17,8 @@ export const ImageController = {
     if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
 
     const key = crypto.randomUUID();
-    const url = await MediaStorage.save(buffer, { key, ext });
+    const optimised = await optimizePhoto(buffer);
+    const url = await MediaStorage.save(optimised.buffer, { key, ext: optimised.ext });
 
     const cleanCaption = caption && caption.trim().length > 0 ? caption.trim() : null;
     const image = await ImageRepository.create({
@@ -35,7 +37,8 @@ export const ImageController = {
     if (!scrapbook) throw new Error('CONTRIBUTION_LINK_INVALID');
 
     const key = crypto.randomUUID();
-    const url = await MediaStorage.save(buffer, { key, ext });
+    const optimised = await optimizePhoto(buffer);
+    const url = await MediaStorage.save(optimised.buffer, { key, ext: optimised.ext });
     const cleanCaption = caption && caption.trim().length > 0 ? caption.trim() : null;
     const image = await ImageRepository.create({
       scrapbookId: scrapbook.id,

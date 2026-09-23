@@ -177,6 +177,16 @@ use `/rotate` to replace a contribution link immediately; the old link stops
 working. Treat contribution links like an invitation and share them only with
 people you trust.
 
+## Image optimisation
+
+Every uploaded Telegram photo is auto-oriented and stored in R2 as a progressive
+JPEG. The optimizer starts at a 1600-pixel longest edge and quality 82, then
+progressively lowers JPEG quality and dimensions (without cropping) until the
+stored file is at most 200 KiB. This keeps galleries fast and makes storage
+capacity predictable. Adjust `IMAGE_MAX_DIMENSION` (maximum 4096),
+`IMAGE_JPEG_QUALITY` (40–95), or `IMAGE_MAX_BYTES` if you need a different
+quality/size trade-off.
+
 ---
 
 ## Going to the cloud later

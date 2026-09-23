@@ -33,3 +33,11 @@ services:
         value: scrapsync-media
       - key: R2_PUBLIC_BASE_URL
         sync: false
+      - key: IMAGE_MAX_DIMENSION
+        value: "1600"
+      - key: IMAGE_JPEG_QUALITY
+        value: "82"
+      - key: IMAGE_MAX_BYTES
+        value: "204800"
+      - key: IMAGE_MAX_INPUT_PIXELS
+        value: "100000000"

@@ -14,6 +14,11 @@ function required(name) {
   return value;
 }
 
+function positiveInteger(value, fallback, { minimum = 1, maximum = Number.MAX_SAFE_INTEGER } = {}) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= minimum && parsed <= maximum ? parsed : fallback;
+}
+
 export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
@@ -41,6 +46,12 @@ export const config = {
     r2SecretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
     r2Bucket: process.env.R2_BUCKET || 'scrapsync-media',
     r2PublicBaseUrl: (process.env.R2_PUBLIC_BASE_URL || '').replace(/\/$/, ''),
+  },
+  images: {
+    maxDimension: positiveInteger(process.env.IMAGE_MAX_DIMENSION, 1600, { maximum: 4096 }),
+    jpegQuality: positiveInteger(process.env.IMAGE_JPEG_QUALITY, 82, { minimum: 40, maximum: 95 }),
+    maxBytes: positiveInteger(process.env.IMAGE_MAX_BYTES, 200 * 1024, { minimum: 50 * 1024 }),
+    maxInputPixels: positiveInteger(process.env.IMAGE_MAX_INPUT_PIXELS, 100_000_000),
   },
   paths: {
     projectRoot,
