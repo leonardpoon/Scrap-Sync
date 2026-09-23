@@ -385,7 +385,7 @@ export function createBot() {
       'Delete this entire scrapbook and all of its photos? This cannot be undone.',
       {
         reply_markup: new InlineKeyboard()
-          .text('🗑️ Delete scrapbook', `mx:${confirmToken}`)
+          .text('Delete scrapbook', `mx:${confirmToken}`)
           .text('Keep it', `mk:${confirmToken}`),
       },
     );
@@ -535,8 +535,8 @@ async function sendColorMenu(ctx, scrapbook, { edit = false } = {}) {
 async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
   const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
   const kb = new InlineKeyboard()
-    .text('🎨 Background', `mb:${t}`)
-    .text('⚙️ Scrapbook management', `mm:${t}`);
+    .text('Background', `mb:${t}`)
+    .text('Scrapbook management', `mm:${t}`);
   const text = 'What would you like to change?';
   return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
 }
@@ -544,9 +544,9 @@ async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
 async function sendManagementMenu(ctx, scrapbook, { edit = false } = {}) {
   const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
   const kb = new InlineKeyboard()
-    .text('✏️ Rename', `mn:${t}`)
+    .text('Rename', `mn:${t}`)
     .row()
-    .text('🗑️ Delete scrapbook', `md:${t}`);
+    .text('Delete scrapbook', `md:${t}`);
   const text = 'Scrapbook management:';
   return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
 }
