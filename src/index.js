@@ -30,7 +30,7 @@ async function main() {
       try {
         await bot.api.setMyCommands([
           { command: 'new', description: 'Create a new scrapbook' },
-          { command: 'menu', description: 'Manage a scrapbook' },
+          { command: 'menu', description: 'Scrapbook management' },
           { command: 'list', description: 'View your scrapbooks' },
           { command: 'delete', description: 'Remove a photo' },
           { command: 'caption', description: 'Add or edit a photo caption' },

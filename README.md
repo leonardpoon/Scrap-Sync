@@ -151,10 +151,11 @@ Run one side only if you like: `npm run web` or `npm run bot`.
    you think of a caption later, use `/caption` to add, edit, or remove a
    caption on any existing photo.
    If you own several scrapbooks, the bot asks which one via buttons.
-4. `/menu` — pick a background colour (Cream · Kraft brown · Blush pink ·
-   Sage green · Charcoal). Only the owner can change it.
-5. `/caption` — choose a photo from one of your scrapbooks, then add, change,
-   or remove its caption.
+4. `/menu` — open **Scrapbook management** to update the background, rename or
+   delete a scrapbook, manage captions, or retrieve that scrapbook's view and
+   contribution links. Only the owner can make changes.
+5. `/caption` — a shortcut to choose a photo from one of your scrapbooks, then
+   add, change, or remove its caption.
 6. Open the share link in a browser. Photos render in an alternating
    left/right photo‑and‑caption layout with a slight tilt; captionless photos
    show centred; on mobile the rows stack.

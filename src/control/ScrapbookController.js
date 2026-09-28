@@ -35,6 +35,13 @@ export const ScrapbookController = {
     return ScrapbookRepository.listByOwner(telegramUserId);
   },
 
+  async findOwned({ scrapbookId, requesterId }) {
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+    return scrapbook;
+  },
+
   shareUrl(publicToken) {
     return `${config.web.publicBaseUrl}/s/${publicToken}`;
   },

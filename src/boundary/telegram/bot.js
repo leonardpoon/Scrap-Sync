@@ -459,6 +459,48 @@ export function createBot() {
     return sendManagementMenu(ctx, { id: pending.scrapbookId }, { edit: true });
   });
 
+  // Caption editing lives in the scrapbook menu as well as /caption, so the
+  // full set of management actions is available in one place.
+  bot.callbackQuery(/^mp:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendCaptionBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, edit: true,
+    });
+  });
+
+  bot.callbackQuery(/^ml:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    try {
+      const scrapbook = await ScrapbookController.findOwned({
+        scrapbookId: pending.scrapbookId, requesterId: ctx.from.id,
+      });
+      PendingStore.remove(t);
+      const contributionUrl = ScrapbookController.contributionUrl(scrapbook.uploadToken);
+      const text = `Links for “${scrapbook.title}”:\n\n` +
+        `View link (read-only):\n${ScrapbookController.shareUrl(scrapbook.publicToken)}` +
+        (contributionUrl
+          ? `\n\nContribution link (lets trusted people add photos):\n${contributionUrl}`
+          : '\n\nContribution link is unavailable until TELEGRAM_BOT_USERNAME is configured.');
+      await ctx.answerCallbackQuery();
+      return ctx.editMessageText(text, { link_preview_options: { is_disabled: true } });
+    } catch (error) {
+      console.error('[sharing links]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not retrieve the links.' });
+    }
+  });
+
   bot.callbackQuery(/^mn:([a-f0-9]+)$/, async (ctx) => {
     const [, t] = ctx.match;
     const pending = PendingStore.get(t);
@@ -649,8 +691,11 @@ async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
   const t = PendingStore.put({ scrapbookId: scrapbook.id, requesterId: ctx.from.id });
   const kb = new InlineKeyboard()
     .text('Background', `mb:${t}`)
-    .text('Scrapbook management', `mm:${t}`);
-  const text = 'What would you like to change?';
+    .text('Scrapbook management', `mm:${t}`)
+    .row()
+    .text('Caption management', `mp:${t}`)
+    .text('Sharing links', `ml:${t}`);
+  const text = 'Scrapbook management:';
   return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
 }
 
