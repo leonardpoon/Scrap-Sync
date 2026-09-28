@@ -33,6 +33,7 @@ async function main() {
           { command: 'menu', description: 'Manage a scrapbook' },
           { command: 'list', description: 'View your scrapbooks' },
           { command: 'delete', description: 'Remove a photo' },
+          { command: 'caption', description: 'Add or edit a photo caption' },
           { command: 'rotate', description: 'Replace a contribution link' },
           { command: 'help', description: 'How to use Scrap&Sync' },
         ]);

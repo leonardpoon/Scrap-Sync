@@ -30,6 +30,16 @@ export const ImageRepository = {
     return Image.fromRow(rows[0]);
   },
 
+  async updateCaption(id, scrapbookId, caption) {
+    const { rows } = await query(
+      `UPDATE images SET caption = $3
+       WHERE id = $1 AND scrapbook_id = $2
+       RETURNING *`,
+      [id, scrapbookId, caption],
+    );
+    return Image.fromRow(rows[0]);
+  },
+
   async deleteByIdAndScrapbook(id, scrapbookId) {
     const { rows } = await query(
       `DELETE FROM images WHERE id = $1 AND scrapbook_id = $2 RETURNING *`,

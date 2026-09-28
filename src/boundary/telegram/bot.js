@@ -13,6 +13,7 @@ import { PendingStore } from './pendingStore.js';
 import { ContributionStore } from './contributionStore.js';
 import { NewScrapbookStore } from './newScrapbookStore.js';
 import { RenameStore } from './renameStore.js';
+import { CaptionStore } from './captionStore.js';
 import { downloadPhoto } from './telegramFiles.js';
 
 export function createBot() {
@@ -52,6 +53,7 @@ export function createBot() {
       `• /menu  — manage a scrapbook\n` +
         `• /rotate  — replace a contribution link\n` +
         `• /delete  — remove a photo from a scrapbook\n` +
+        `• /caption  — add or edit a photo caption\n` +
         `• /list  — see your scrapbooks\n` +
         `• /help  — show this again`,
     );
@@ -64,8 +66,9 @@ export function createBot() {
         `2. Send photos to me. Put a caption in the photo's caption box to label it.\n` +
       `3. /menu  manages a scrapbook’s colour, name, or deletion.\n` +
       `4. /rotate  replaces a contribution link if it was shared too widely.\n` +
-        `5. /delete  lets you find and remove a photo.\n` +
-        `6. /list  shows your scrapbooks and their links.`,
+      `5. /delete  lets you find and remove a photo.\n` +
+      `6. /caption  lets you add, change, or remove a caption on any photo.\n` +
+        `7. /list  shows your scrapbooks and their links.`,
     ),
   );
 
@@ -216,6 +219,104 @@ export function createBot() {
     const kb = new InlineKeyboard();
     books.forEach((book, index) => kb.text(book.title, `ds:${t}:${index}`).row());
     return ctx.reply('Which scrapbook would you like to manage?', { reply_markup: kb });
+  });
+
+  // ── /caption ─────────────────────────────────────────────
+  // Captions are editable later, including photos originally uploaded without one.
+  bot.command('caption', async (ctx) => {
+    const books = await ScrapbookController.listOwned(ctx.from.id);
+    if (books.length === 0) return ctx.reply('You have no scrapbooks yet.');
+    if (books.length === 1) {
+      return sendCaptionBrowser(ctx, { scrapbookId: books[0].id, requesterId: ctx.from.id });
+    }
+    const t = PendingStore.put({ requesterId: ctx.from.id, scrapbookIds: books.map((book) => book.id) });
+    const kb = new InlineKeyboard();
+    books.forEach((book, index) => kb.text(book.title, `cs:${t}:${index}`).row());
+    return ctx.reply('Which scrapbook contains the photo?', { reply_markup: kb });
+  });
+
+  bot.callbackQuery(/^cs:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, indexText] = ctx.match;
+    const pending = PendingStore.get(t);
+    const scrapbookId = pending?.scrapbookIds?.[Number(indexText)];
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id) || !scrapbookId) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /caption again.' });
+      return ctx.editMessageText('This menu expired. Send /caption again.');
+    }
+    await ctx.answerCallbackQuery();
+    return sendCaptionBrowser(ctx, { scrapbookId, requesterId: ctx.from.id, edit: true });
+  });
+
+  bot.callbackQuery(/^cp:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, indexText] = ctx.match;
+    const pending = PendingStore.get(t);
+    const imageId = pending?.imageIds?.[Number(indexText)];
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id) || !imageId) {
+      await ctx.answerCallbackQuery({ text: 'That photo list expired — send /caption again.' });
+      return;
+    }
+    try {
+      const image = await ImageController.findOwnedPhoto({
+        imageId, scrapbookId: pending.scrapbookId, requesterId: ctx.from.id,
+      });
+      const editToken = PendingStore.put({
+        requesterId: ctx.from.id, scrapbookId: pending.scrapbookId, imageId: image.id,
+      });
+      await ctx.answerCallbackQuery();
+      return ctx.replyWithPhoto(image.url, {
+        caption: `Current caption: ${image.hasCaption() ? image.caption : 'none'}`,
+        reply_markup: new InlineKeyboard()
+          .text('Edit caption', `ce:${editToken}`)
+          .text('Remove caption', `cr:${editToken}`),
+      });
+    } catch (error) {
+      console.error('[caption preview]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not open that photo.' });
+    }
+  });
+
+  bot.callbackQuery(/^cn:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, pageText] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That photo list expired — send /caption again.' });
+      return ctx.editMessageText('This photo list expired. Send /caption again.');
+    }
+    await ctx.answerCallbackQuery();
+    return sendCaptionBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, page: Number(pageText), edit: true,
+    });
+  });
+
+  bot.callbackQuery(/^ce:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That request expired — send /caption again.' });
+      return;
+    }
+    PendingStore.remove(t);
+    CaptionStore.start(ctx.from.id, pending);
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageCaption('Send the new caption as a message.');
+  });
+
+  bot.callbackQuery(/^cr:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That request expired — send /caption again.' });
+      return;
+    }
+    try {
+      await ImageController.updateOwnedPhotoCaption({ ...pending, requesterId: ctx.from.id, caption: null });
+      PendingStore.remove(t);
+      await ctx.answerCallbackQuery({ text: 'Caption removed' });
+      return ctx.editMessageCaption('✅ Caption removed.');
+    } catch (error) {
+      console.error('[remove caption]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not remove the caption.' });
+    }
   });
 
   bot.callbackQuery(/^ds:([a-f0-9]+):(\d+)$/, async (ctx) => {
@@ -469,6 +570,18 @@ export function createBot() {
         return ctx.reply(message);
       }
     }
+    const captionEdit = CaptionStore.take(ctx.from.id);
+    if (captionEdit) {
+      try {
+        const image = await ImageController.updateOwnedPhotoCaption({
+          ...captionEdit, requesterId: ctx.from.id, caption: ctx.message.text,
+        });
+        return ctx.reply(`✅ Caption ${image.hasCaption() ? 'updated' : 'removed'}.`);
+      } catch (error) {
+        console.error('[caption update]', error);
+        return ctx.reply('Could not update that caption. Send /caption and try again.');
+      }
+    }
     return ctx.reply('Send me a photo to add it to a scrapbook, or /new to create one.');
   });
 
@@ -589,6 +702,38 @@ async function sendDeletionBrowser(ctx, { scrapbookId, requesterId, page = 0, ed
   } catch (error) {
     console.error('[delete browser]', error);
     const text = 'Could not load this scrapbook’s photos. Please try /delete again.';
+    return edit ? ctx.editMessageText(text) : ctx.reply(text);
+  }
+}
+
+async function sendCaptionBrowser(ctx, { scrapbookId, requesterId, page = 0, edit = false }) {
+  try {
+    const photos = (await ImageController.listOwnedPhotos({ scrapbookId, requesterId })).reverse();
+    if (photos.length === 0) {
+      const text = 'This scrapbook has no photos to caption.';
+      return edit ? ctx.editMessageText(text) : ctx.reply(text);
+    }
+
+    const pageSize = 6;
+    const pageCount = Math.ceil(photos.length / pageSize);
+    const safePage = Math.max(0, Math.min(page, pageCount - 1));
+    const start = safePage * pageSize;
+    const pagePhotos = photos.slice(start, start + pageSize);
+    const t = PendingStore.put({
+      requesterId, scrapbookId, imageIds: pagePhotos.map((photo) => photo.id),
+    });
+    const kb = new InlineKeyboard();
+    pagePhotos.forEach((photo, index) => {
+      kb.text(photoButtonLabel(photo, start + index + 1), `cp:${t}:${index}`).row();
+    });
+    if (safePage > 0) kb.text('‹ Newer', `cn:${t}:${safePage - 1}`);
+    if (safePage < pageCount - 1) kb.text('Older ›', `cn:${t}:${safePage + 1}`);
+
+    const text = `Choose a photo to caption (${start + 1}–${start + pagePhotos.length} of ${photos.length}):`;
+    return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
+  } catch (error) {
+    console.error('[caption browser]', error);
+    const text = 'Could not load this scrapbook’s photos. Please try /caption again.';
     return edit ? ctx.editMessageText(text) : ctx.reply(text);
   }
 }

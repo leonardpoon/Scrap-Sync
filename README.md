@@ -147,12 +147,15 @@ Run one side only if you like: `npm run web` or `npm run bot`.
 1. `/start` — registers you.
 2. `/new "Bali Trip"` — creates a scrapbook, replies with a share link
    `http://localhost:3000/s/<uuid>`.
-3. **Send a photo.** Add a caption in the photo's caption box to label it
-   (captions in a separate follow‑up message are not captured — MVP scope).
+3. **Send a photo.** Add a caption in the photo's caption box to label it. If
+   you think of a caption later, use `/caption` to add, edit, or remove a
+   caption on any existing photo.
    If you own several scrapbooks, the bot asks which one via buttons.
 4. `/menu` — pick a background colour (Cream · Kraft brown · Blush pink ·
    Sage green · Charcoal). Only the owner can change it.
-5. Open the share link in a browser. Photos render in an alternating
+5. `/caption` — choose a photo from one of your scrapbooks, then add, change,
+   or remove its caption.
+6. Open the share link in a browser. Photos render in an alternating
    left/right photo‑and‑caption layout with a slight tilt; captionless photos
    show centred; on mobile the rows stack.
 

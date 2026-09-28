@@ -64,6 +64,19 @@ export const ImageController = {
     return image;
   },
 
+  async updateOwnedPhotoCaption({ imageId, scrapbookId, requesterId, caption }) {
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
+    if (!scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+
+    const cleanCaption = typeof caption === 'string' && caption.trim().length > 0
+      ? caption.trim()
+      : null;
+    const image = await ImageRepository.updateCaption(imageId, scrapbookId, cleanCaption);
+    if (!image) throw new Error('IMAGE_NOT_FOUND');
+    return image;
+  },
+
   async deleteOwnedPhoto({ imageId, scrapbookId, requesterId }) {
     const scrapbook = await ScrapbookRepository.findById(scrapbookId);
     if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');
