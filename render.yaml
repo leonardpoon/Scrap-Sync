@@ -21,6 +21,12 @@ services:
         sync: false
       - key: TELEGRAM_BOT_USERNAME
         sync: false
+      # Telegram sends updates to this route, allowing an incoming bot message
+      # to wake the web service instead of depending on a live poller.
+      - key: TELEGRAM_UPDATE_MODE
+        value: webhook
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
       - key: MEDIA_PROVIDER
         value: r2
       - key: R2_ACCOUNT_ID

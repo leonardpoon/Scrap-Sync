@@ -15,10 +15,6 @@ let server = null;
 let bot = null;
 
 async function main() {
-  if (!botOnly) {
-    server = startWeb();
-  }
-
   if (!webOnly) {
     if (!config.telegram.botToken) {
       console.warn(
@@ -41,6 +37,27 @@ async function main() {
         // The bot remains usable if Telegram is temporarily unreachable at startup.
         console.warn('⚠  Could not update the Telegram command menu:', error.message);
       }
+    }
+  }
+
+  if (!botOnly) {
+    server = startWeb({
+      telegramBot: config.telegram.updateMode === 'webhook' ? bot : null,
+      telegramWebhookSecret: config.telegram.webhookSecret,
+    });
+  }
+
+  if (bot) {
+    if (config.telegram.updateMode === 'webhook') {
+      if (!config.telegram.webhookUrl) {
+        throw new Error('TELEGRAM_WEBHOOK_URL is required when TELEGRAM_UPDATE_MODE=webhook.');
+      }
+      await bot.api.setWebhook(config.telegram.webhookUrl, {
+        secret_token: config.telegram.webhookSecret || undefined,
+        drop_pending_updates: false,
+      });
+      console.log(`🤖 Telegram bot is using webhooks at ${config.telegram.webhookUrl}.`);
+    } else {
       bot.start({
         onStart: (me) => console.log(`🤖 Telegram bot @${me.username} is running (long polling).`),
       });

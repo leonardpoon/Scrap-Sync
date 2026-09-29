@@ -64,6 +64,15 @@ export const ImageController = {
     return image;
   },
 
+  async moveOwnedPhoto({ imageId, scrapbookId, requesterId, direction }) {
+    if (!['earlier', 'later'].includes(direction)) throw new Error('INVALID_DIRECTION');
+    const scrapbook = await ScrapbookRepository.findById(scrapbookId);
+    if (!scrapbook || !scrapbook.isOwnedBy(requesterId)) throw new Error('NOT_OWNER');
+    const result = await ImageRepository.move({ imageId, scrapbookId, direction });
+    if (!result) throw new Error('IMAGE_NOT_FOUND');
+    return result;
+  },
+
   async updateOwnedPhotoCaption({ imageId, scrapbookId, requesterId, caption }) {
     const scrapbook = await ScrapbookRepository.findById(scrapbookId);
     if (!scrapbook) throw new Error('SCRAPBOOK_NOT_FOUND');

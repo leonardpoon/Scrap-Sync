@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '..');
+const publicBaseUrl = (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/$/, '');
+const telegramUpdateMode = process.env.TELEGRAM_UPDATE_MODE === 'webhook' ? 'webhook' : 'polling';
 
 function required(name) {
   const value = process.env[name];
@@ -23,6 +25,11 @@ export const config = {
   telegram: {
     botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     botUsername: (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, ''),
+    updateMode: telegramUpdateMode,
+    webhookUrl: (process.env.TELEGRAM_WEBHOOK_URL || (telegramUpdateMode === 'webhook'
+      ? `${publicBaseUrl}/telegram/webhook`
+      : '')).replace(/\/$/, ''),
+    webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || '',
   },
   database: {
     url: process.env.DATABASE_URL || 'postgres://scrapsync:scrapsync@localhost:5432/scrapsync',
@@ -32,7 +39,7 @@ export const config = {
   },
   web: {
     port: Number(process.env.PORT || 3000),
-    publicBaseUrl: (process.env.PUBLIC_BASE_URL || process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000').replace(/\/$/, ''),
+    publicBaseUrl,
   },
   media: {
     provider: process.env.MEDIA_PROVIDER || 'local',

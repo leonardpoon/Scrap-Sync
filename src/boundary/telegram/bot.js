@@ -14,6 +14,7 @@ import { ContributionStore } from './contributionStore.js';
 import { NewScrapbookStore } from './newScrapbookStore.js';
 import { RenameStore } from './renameStore.js';
 import { CaptionStore } from './captionStore.js';
+import { MediaGroups } from './mediaGroupStore.js';
 import { downloadPhoto } from './telegramFiles.js';
 
 export function createBot() {
@@ -128,12 +129,26 @@ export function createBot() {
   bot.on('message:photo', async (ctx) => {
     const photos = ctx.message.photo;
     const largest = photos[photos.length - 1]; // best resolution
-    const fileId = largest.file_id;
-    const caption = ctx.message.caption || null;
+    const upload = { fileId: largest.file_id, caption: ctx.message.caption || null };
 
+    // Telegram sends an album as several updates with one media_group_id.
+    // Wait briefly for them all, then show exactly one destination picker.
+    if (ctx.message.media_group_id) {
+      MediaGroups.add({
+        userId: ctx.from.id,
+        mediaGroupId: ctx.message.media_group_id,
+        messageId: ctx.message.message_id,
+        value: { ctx, ...upload },
+      }, async (group) => handlePhotoBatch(group[0].ctx, group.map(({ fileId, caption }) => ({ fileId, caption }))));
+      return;
+    }
+    await handlePhotoBatch(ctx, [upload]);
+  });
+
+  async function handlePhotoBatch(ctx, uploads) {
     const uploadToken = ContributionStore.get(ctx.from.id);
     if (uploadToken) {
-      return ingestContribution(ctx, { fileId, caption, uploadToken });
+      return ingestContributionBatch(ctx, { uploads, uploadToken });
     }
 
     const books = await ScrapbookController.listOwned(ctx.from.id);
@@ -143,22 +158,22 @@ export function createBot() {
     }
 
     if (books.length === 1) {
-      return ingestPhoto(ctx, { fileId, caption, scrapbookId: books[0].id });
+      return ingestPhotoBatch(ctx, { uploads, scrapbookId: books[0].id });
     }
 
-    // Multiple scrapbooks: ask which one via inline keyboard.
+    // Multiple scrapbooks: ask once, even when the user sent an album.
     const t = PendingStore.put({
-      fileId,
-      caption,
+      uploads,
       requesterId: ctx.from.id,
       scrapbookIds: books.map((b) => b.id),
     });
     const kb = new InlineKeyboard();
     books.forEach((b, i) => kb.text(b.title, `us:${t}:${i}`).row());
-    await ctx.reply('Which scrapbook should I save this to?', { reply_markup: kb });
-  });
+    const noun = uploads.length === 1 ? 'photo' : `${uploads.length} photos`;
+    await ctx.reply(`Which scrapbook should I save these ${noun} to?`, { reply_markup: kb });
+  }
 
-  // Callback: user picked a scrapbook for the pending photo.
+  // Callback: user picked a scrapbook for the pending photo(s).
   bot.callbackQuery(/^us:([a-f0-9]+):(\d+)$/, async (ctx) => {
     const [, t, idxStr] = ctx.match;
     const pending = PendingStore.get(t);
@@ -169,13 +184,9 @@ export function createBot() {
     const scrapbookId = pending.scrapbookIds[Number(idxStr)];
     PendingStore.remove(t);
     await ctx.answerCallbackQuery();
-    await ctx.editMessageText('Saving…');
-    await ingestPhoto(ctx, {
-      fileId: pending.fileId,
-      caption: pending.caption,
-      scrapbookId,
-      edit: true,
-    });
+    const uploads = pending.uploads || [{ fileId: pending.fileId, caption: pending.caption }];
+    await ctx.editMessageText(`Saving ${uploads.length === 1 ? 'photo' : `${uploads.length} photos`}…`);
+    await ingestPhotoBatch(ctx, { uploads, scrapbookId, edit: true });
   });
 
   // ── /menu ─────────────────────────────────────────────────
@@ -475,6 +486,96 @@ export function createBot() {
     });
   });
 
+  bot.callbackQuery(/^mr:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That menu expired — send /menu again.' });
+      return ctx.editMessageText('This menu expired. Send /menu again.');
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendReorderBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, edit: true,
+    });
+  });
+
+  bot.callbackQuery(/^rr:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, indexText] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That list expired — open Reorder photos again.' });
+      return;
+    }
+    const imageId = pending.imageIds[Number(indexText)];
+    if (!imageId) {
+      await ctx.answerCallbackQuery({ text: 'That photo is no longer available.' });
+      return;
+    }
+    PendingStore.remove(t);
+    const actionToken = PendingStore.put({
+      requesterId: ctx.from.id, scrapbookId: pending.scrapbookId, imageId,
+    });
+    await ctx.answerCallbackQuery();
+    return ctx.editMessageText('Move this photo:', {
+      reply_markup: new InlineKeyboard()
+        .text('↑ Earlier', `ru:${actionToken}:earlier`)
+        .text('↓ Later', `ru:${actionToken}:later`)
+        .row()
+        .text('Back to photos', `rb:${actionToken}`),
+    });
+  });
+
+  bot.callbackQuery(/^ru:([a-f0-9]+):(earlier|later)$/, async (ctx) => {
+    const [, t, direction] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That action expired — open Reorder photos again.' });
+      return;
+    }
+    try {
+      const result = await ImageController.moveOwnedPhoto({
+        ...pending, requesterId: ctx.from.id, direction,
+      });
+      PendingStore.remove(t);
+      await ctx.answerCallbackQuery({ text: result.moved ? 'Order updated' : 'Already at that end' });
+      return sendReorderBrowser(ctx, {
+        scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, edit: true,
+      });
+    } catch (error) {
+      console.error('[reorder]', error);
+      await ctx.answerCallbackQuery({ text: 'Could not reorder that photo.' });
+    }
+  });
+
+  bot.callbackQuery(/^rb:([a-f0-9]+)$/, async (ctx) => {
+    const [, t] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That action expired — open Reorder photos again.' });
+      return;
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendReorderBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, edit: true,
+    });
+  });
+
+  bot.callbackQuery(/^rn:([a-f0-9]+):(\d+)$/, async (ctx) => {
+    const [, t, pageText] = ctx.match;
+    const pending = PendingStore.get(t);
+    if (!pending || String(pending.requesterId) !== String(ctx.from.id)) {
+      await ctx.answerCallbackQuery({ text: 'That list expired — open Reorder photos again.' });
+      return;
+    }
+    PendingStore.remove(t);
+    await ctx.answerCallbackQuery();
+    return sendReorderBrowser(ctx, {
+      scrapbookId: pending.scrapbookId, requesterId: ctx.from.id, page: Number(pageText), edit: true,
+    });
+  });
+
   bot.callbackQuery(/^ml:([a-f0-9]+)$/, async (ctx) => {
     const [, t] = ctx.match;
     const pending = PendingStore.get(t);
@@ -634,7 +735,7 @@ export function createBot() {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-async function ingestPhoto(ctx, { fileId, caption, scrapbookId, edit = false }) {
+async function ingestPhoto(ctx, { fileId, caption, scrapbookId, edit = false, silent = false }) {
   try {
     const { buffer, ext } = await downloadPhoto(ctx.api, fileId);
     const { image, scrapbook } = await ImageController.savePhoto({
@@ -646,6 +747,7 @@ async function ingestPhoto(ctx, { fileId, caption, scrapbookId, edit = false }) 
     });
     const note = image.caption ? ` with your caption` : '';
     const text = `📸 Added to “${scrapbook.title}”${note}.\n${ScrapbookController.shareUrl(scrapbook.publicToken)}`;
+    if (silent) return { image, scrapbook };
     if (edit) await ctx.editMessageText(text, { link_preview_options: { is_disabled: true } });
     else await ctx.reply(text, { link_preview_options: { is_disabled: true } });
   } catch (err) {
@@ -654,25 +756,60 @@ async function ingestPhoto(ctx, { fileId, caption, scrapbookId, edit = false }) 
         ? 'That scrapbook is not yours.'
         : 'Sorry, I could not save that photo. Please try again.';
     console.error('[ingest]', err);
+    if (silent) return null;
     if (edit) await ctx.editMessageText(msg);
     else await ctx.reply(msg);
   }
 }
 
-async function ingestContribution(ctx, { fileId, caption, uploadToken }) {
+async function ingestPhotoBatch(ctx, { uploads, scrapbookId, edit = false }) {
+  const results = [];
+  for (const upload of uploads) {
+    results.push(await ingestPhoto(ctx, { ...upload, scrapbookId, silent: true }));
+  }
+  const saved = results.filter(Boolean);
+  if (saved.length === 0) {
+    const message = 'Sorry, I could not save these photos. Please try again.';
+    return edit ? ctx.editMessageText(message) : ctx.reply(message);
+  }
+  const scrapbook = saved[0].scrapbook;
+  const text = saved.length === 1
+    ? `📸 Added to “${scrapbook.title}”.\n${ScrapbookController.shareUrl(scrapbook.publicToken)}`
+    : `📸 Added ${saved.length} of ${uploads.length} photos to “${scrapbook.title}”.\n${ScrapbookController.shareUrl(scrapbook.publicToken)}`;
+  const options = { link_preview_options: { is_disabled: true } };
+  return edit ? ctx.editMessageText(text, options) : ctx.reply(text, options);
+}
+
+async function ingestContribution(ctx, { fileId, caption, uploadToken, silent = false }) {
   try {
     const { buffer, ext } = await downloadPhoto(ctx.api, fileId);
     const { scrapbook } = await ImageController.saveContribution({
       uploadToken, requesterId: ctx.from.id, buffer, ext, caption,
     });
+    if (silent) return { scrapbook };
     await ctx.reply(`📸 Added to “${scrapbook.title}”. Thanks for sharing a memory!`);
   } catch (err) {
     const message = err.message === 'CONTRIBUTION_LINK_INVALID'
       ? 'This contribution link has been replaced or revoked. Ask the owner for a new link.'
       : 'Sorry, I could not save that photo. Please try again.';
     console.error('[contribution]', err);
+    if (silent) return null;
     await ctx.reply(message);
   }
+}
+
+async function ingestContributionBatch(ctx, { uploads, uploadToken }) {
+  const results = [];
+  for (const upload of uploads) {
+    results.push(await ingestContribution(ctx, { ...upload, uploadToken, silent: true }));
+  }
+  const saved = results.filter(Boolean);
+  if (saved.length === 0) return ctx.reply('Sorry, I could not save these photos. Please try again.');
+  const scrapbook = saved[0].scrapbook;
+  const text = saved.length === 1
+    ? `📸 Added to “${scrapbook.title}”. Thanks for sharing a memory!`
+    : `📸 Added ${saved.length} of ${uploads.length} photos to “${scrapbook.title}”. Thanks for sharing memories!`;
+  return ctx.reply(text);
 }
 
 async function sendColorMenu(ctx, scrapbook, { edit = false } = {}) {
@@ -694,9 +831,41 @@ async function sendScrapbookMenu(ctx, scrapbook, { edit = false } = {}) {
     .text('Scrapbook management', `mm:${t}`)
     .row()
     .text('Caption management', `mp:${t}`)
+    .text('Reorder photos', `mr:${t}`)
+    .row()
     .text('Sharing links', `ml:${t}`);
   const text = 'Scrapbook management:';
   return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
+}
+
+async function sendReorderBrowser(ctx, { scrapbookId, requesterId, page = 0, edit = false }) {
+  try {
+    const photos = await ImageController.listOwnedPhotos({ scrapbookId, requesterId });
+    if (photos.length === 0) {
+      const text = 'This scrapbook has no photos to reorder.';
+      return edit ? ctx.editMessageText(text) : ctx.reply(text);
+    }
+    const pageSize = 6;
+    const pageCount = Math.ceil(photos.length / pageSize);
+    const safePage = Math.max(0, Math.min(page, pageCount - 1));
+    const start = safePage * pageSize;
+    const pagePhotos = photos.slice(start, start + pageSize);
+    const t = PendingStore.put({
+      requesterId, scrapbookId, imageIds: pagePhotos.map((photo) => photo.id),
+    });
+    const kb = new InlineKeyboard();
+    pagePhotos.forEach((photo, index) => {
+      kb.text(photoButtonLabel(photo, start + index + 1), `rr:${t}:${index}`).row();
+    });
+    if (safePage > 0) kb.text('‹ Earlier photos', `rn:${t}:${safePage - 1}`);
+    if (safePage < pageCount - 1) kb.text('Later photos ›', `rn:${t}:${safePage + 1}`);
+    const text = `Choose a photo to move (${start + 1}–${start + pagePhotos.length} of ${photos.length}):`;
+    return edit ? ctx.editMessageText(text, { reply_markup: kb }) : ctx.reply(text, { reply_markup: kb });
+  } catch (error) {
+    console.error('[reorder browser]', error);
+    const text = 'Could not load this scrapbook’s photos. Please try /menu again.';
+    return edit ? ctx.editMessageText(text) : ctx.reply(text);
+  }
 }
 
 async function sendManagementMenu(ctx, scrapbook, { edit = false } = {}) {

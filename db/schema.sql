@@ -47,11 +47,23 @@ CREATE TABLE IF NOT EXISTS images (
     url               TEXT         NOT NULL,
     caption           TEXT,
     contributor_id    BIGINT       REFERENCES users(telegram_user_id) ON DELETE SET NULL,
+    display_order     INTEGER,
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_images_scrapbook ON images(scrapbook_id, created_at);
 ALTER TABLE images ADD COLUMN IF NOT EXISTS contributor_id BIGINT REFERENCES users(telegram_user_id) ON DELETE SET NULL;
+ALTER TABLE images ADD COLUMN IF NOT EXISTS display_order INTEGER;
+-- Keep existing scrapbooks in their current chronological order on upgrade.
+UPDATE images AS image
+SET display_order = numbered.position
+FROM (
+    SELECT id, ROW_NUMBER() OVER (PARTITION BY scrapbook_id ORDER BY created_at, id)::INTEGER AS position
+    FROM images
+    WHERE display_order IS NULL
+) AS numbered
+WHERE image.id = numbered.id;
+CREATE INDEX IF NOT EXISTS idx_images_scrapbook_display_order ON images(scrapbook_id, display_order);
 
 -- These tables live in Supabase's exposed `public` schema, but the app talks
 -- to Postgres only from its server. Enable RLS without browser-facing policies

@@ -127,7 +127,7 @@ npm install
    rotate - Replace a scrapbook contribution link
    ```
 
-No webhook or public URL is needed — the bot uses long polling.
+Local development uses long polling, so no webhook or public URL is needed.
 
 ### 5. Run
 
@@ -230,10 +230,13 @@ to permit this workflow to push). This keeps `main` limited to tested commits.
 
 ## Production: Render + Supabase
 
-`render.yaml` deploys the web viewer and Telegram long-polling bot together as
-a Render web service. Use a non-sleeping Render plan: the bot must remain
-running to receive messages. Render applies the idempotent database schema on
-each deploy before starting the service.
+`render.yaml` deploys the web viewer and Telegram bot together as a Render web
+service. Production uses a Telegram webhook: sending the bot a message makes
+Telegram call the service, which can wake it if it is idle. Render applies the
+idempotent database schema on each deploy before starting the service.
+
+The webhook URL is derived from Render's `RENDER_EXTERNAL_URL`; set
+`TELEGRAM_WEBHOOK_URL` only when you need to override it.
 
 Create a Supabase project for PostgreSQL and a Cloudflare R2 bucket named
 `scrapsync-media` for photos. Enable the R2 bucket's public URL (or connect a

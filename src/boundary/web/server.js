@@ -7,7 +7,7 @@ import { GalleryController } from '../../control/GalleryController.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export function createWebApp() {
+export function createWebApp({ telegramBot = null, telegramWebhookSecret = '' } = {}) {
   const app = express();
 
   app.set('view engine', 'ejs');
@@ -19,6 +19,23 @@ export function createWebApp() {
   // Static assets (stylesheet).
   app.use('/assets', express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
   app.use('/demo-assets', express.static(path.join(config.paths.projectRoot, 'assets'), { maxAge: '1h' }));
+
+  // Webhooks let Telegram wake a sleeping HTTP service. Long polling cannot do
+  // that because it only works while this Node process is already running.
+  if (telegramBot) {
+    app.post('/telegram/webhook', express.json(), async (req, res, next) => {
+      const secret = req.get('x-telegram-bot-api-secret-token');
+      if (telegramWebhookSecret && secret !== telegramWebhookSecret) {
+        return res.sendStatus(403);
+      }
+      try {
+        await telegramBot.handleUpdate(req.body);
+        return res.sendStatus(200);
+      } catch (error) {
+        return next(error);
+      }
+    });
+  }
 
   app.get('/', (_req, res) => {
     // A real-looking preview makes the product understandable before the bot
@@ -69,8 +86,8 @@ export function createWebApp() {
   return app;
 }
 
-export function startWeb() {
-  const app = createWebApp();
+export function startWeb(options) {
+  const app = createWebApp(options);
   return app.listen(config.web.port, () => {
     console.log(`🌐 Web viewer on ${config.web.publicBaseUrl}  (port ${config.web.port})`);
   });
